@@ -1,92 +1,123 @@
-from flask.wrappers import Response
-from flask import Flask, request, render_template
+# app.py – Versión 100% funcional en Railway (CPU-only, batch, watermark)
+from flask import Flask, request, render_template, send_file, Response
 import cv2
 import os
-import time
 import numpy as np
 import tensorflow as tf
 import tensorflow_hub as hub
+from PIL import Image, ImageDraw, ImageFont
+from io import BytesIO
+import zipfile
+import time
 
-os.environ["TFHUB_DOWNLOAD_PROGRESS"] = "True"
 app = Flask(__name__)
+app.config['UPLOAD_FOLDER'] = '/tmp/uploads'
+app.config['OUTPUT_FOLDER'] = '/tmp/results'
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
 
-# Load SRCNN model
+# ===================== CARGA DEL MODELO UNA SOLA VEZ =====================
+print("Cargando modelo ESRGAN... (puede tardar 30-60 segundos la primera vez)")
 SAVED_MODEL_PATH = "https://tfhub.dev/captain-pool/esrgan-tf2/1"
-model = None
+model = hub.load(SAVED_MODEL_PATH)
+print("Modelo ESRGAN cargado correctamente!")
 
-# Define function for image upscaling and enhancement
-def enhance_image(img):
-    pp_image = preprocess_image(img)
+# ===================== FUNCIONES =====================
+def preprocess_image(image):
+    if image.shape[-1] == 4:
+        image = image[..., :3]
+    hr_size = (tf.convert_to_tensor(image.shape[:-1]) // 4) * 4
+    image = tf.image.crop_to_bounding_box(image, 0, 0, hr_size[0], hr_size[1])
+    image = tf.cast(image, tf.float32)
+    return tf.expand_dims(image, 0)
 
-    start = time.time()
-    upscaled_img = model(pp_image)
-    upscaled_img = tf.squeeze(upscaled_img)
-    print("Time Taken: %f" % (time.time() - start))
-    
-    # https://www.javatpoint.com/fastnlmeansdenoising-in-python
-    # enhanced_img = cv2.fastNlMeansDenoisingColored(upscaled_img, None, 10, 10, 7, 21)
-    return upscaled_img
+def postprocess_image(tensor_img):
+    img = tensor_img.numpy()
+    img = np.clip(img, 0, 255).astype(np.uint8)
+    return img
 
-def preprocess_image(pp_image):
-  """ Loads image from path and preprocesses to make it model ready
-      Args:
-        pp_image: image file
-  """
-  # If PNG, remove the alpha channel. The model only supports
-  # images with 3 color channels.
-  if pp_image.shape[-1] == 4:
-    pp_image = pp_image[...,:-1]
-  hr_size = (tf.convert_to_tensor(pp_image.shape[:-1]) // 4) * 4
-  pp_image = tf.image.crop_to_bounding_box(pp_image, 0, 0, hr_size[0], hr_size[1])
-  pp_image = tf.cast(pp_image, tf.float32)
-  return tf.expand_dims(pp_image, 0)
+def add_watermark(pil_img, text="MBU SCZ"):
+    draw = ImageDraw.Draw(pil_img)
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 40)
+    except:
+        font = ImageFont.load_default()
+    w, h = pil_img.size
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    margin = 20
+    position = (w - text_width - margin, h - text_height - margin)
+    draw.text(position, text, fill=(255, 255, 255, 200), font=font, stroke_width=2, stroke_fill=(0,0,0,200))
+    return pil_img
 
-
-# Define route for homepage
+# ===================== RUTAS =====================
 @app.route('/')
 def index():
     return render_template('index.html')
 
-# Define route for image upload
 @app.route('/upload', methods=['POST'])
 def upload():
-    # Load uploaded image
-    file = request.files['image']
+    if 'images' not in request.files:
+        return "No file part", 400
 
-    # Read bytes and convert them to image
-    img = cv2.imdecode(np.frombuffer(file.read(), np.uint8), cv2.IMREAD_COLOR)
+    files = request.files.getlist('images')
+    if not files or all(f.filename == '' for f in files):
+        return "No selected files", 400
 
-    # Enhance image
-    enhanced_img = enhance_image(img)
+    result_images = []
 
-    print(f"Original Shape: {img.shape}")
-    print(f"Enhanced Shape: {enhanced_img.shape}")
+    for file in files:
+        if file.filename == '':
+            continue
 
-    # Encode enhanced image
-    numpy_image = enhanced_img.numpy()
-    _, encoded_img = cv2.imencode('.jpg', numpy_image)
-    byte_image = encoded_img.tobytes()
+        # Leer y decodificar
+        filestr = file.read()
+        npimg = np.frombuffer(filestr, np.uint8)
+        img = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
+        if img is None:
+            continue
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-    # Al final de la función enhance (después de output = model.enhance(...))
-    from PIL import Image, ImageDraw, ImageFont
-    draw = ImageDraw.Draw(output)
-    font = ImageFont.load_default()
-    draw.text((10, 10), "MBU SCZ", fill="white", font=font)
-    output.save('static/upscaled/' + filename)
+        # Upscale
+        preprocessed = preprocess_image(img_rgb)
+        start = time.time()
+        upscaled_tensor = model(preprocessed)
+        upscaled_tensor = tf.squeeze(upscaled_tensor)
+        print(f"Tiempo upscale: {time.time() - start:.2f}s")
 
-    # Encode original image
-    _, encoded_orig_img = cv2.imencode('.jpg', img)
-    encoded_orig_img = encoded_orig_img.tobytes()
+        # Post-procesar
+        upscaled_np = postprocess_image(upscaled_tensor)
 
-    # Create response
-    #response = []
-    #response.append(Response(byte_image, mimetype='image/jpeg'))
-    #response.append(Response(encoded_orig_img, mimetype='image/jpeg'))
-    response = Response(byte_image, mimetype='image/jpeg')
+        # Convertir a PIL y agregar watermark
+        pil_img = Image.fromarray(upscaled_np)
+        pil_img = add_watermark(pil_img, "MBU SCZ")
 
-    return response
+        # Guardar temporalmente
+        output_path = os.path.join(app.config['OUTPUT_FOLDER'], f"upscaled_{file.filename}")
+        pil_img.save(output_path, quality=95)
+        result_images.append(output_path)
 
+    # Si es una sola imagen → devolver directo
+    if len(result_images) == 1:
+        return send_file(result_images[0], mimetype='image/jpeg')
+
+    # Si son varias → devolver ZIP
+    memory_file = BytesIO()
+    with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for path in result_images:
+            zf.write(path, os.path.basename(path))
+    memory_file.seek(0)
+
+    return send_file(
+        memory_file,
+        mimetype='application/zip',
+        as_attachment=True,
+        download_name=f"upscaled_MBU_{int(time.time())}.zip"
+    )
+
+# ===================== INICIO =====================
 if __name__ == '__main__':
-    # Initialize model
-    model = hub.load(SAVED_MODEL_PATH)
-    app.run(debug=True)
+    # Railway usa $PORT
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
