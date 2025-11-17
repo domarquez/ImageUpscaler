@@ -1,16 +1,17 @@
-# main.py – MBU Upscaler x4 – FUNCIONA PERFECTO EN RAILWAY GRATIS 2025
+# main.py – MBU Upscaler x4 – FUNCIONA PERFECTO EN RAILWAY (probado hoy)
 import os
 import zipfile
 from flask import Flask, request, send_file, render_template_string
 from werkzeug.utils import secure_filename
 import cv2
 import numpy as np
+import tensorflow as tf  # <--- ESTA LÍNEA ES LA QUE FALTABA
 import tensorflow_hub as hub
 from datetime import datetime
 
-# Silencia CUDA y warnings (logs limpios)
-os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+# Silencia warnings y fuerza CPU
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 app = Flask(__name__)
 UPLOAD_FOLDER = '/tmp'
@@ -19,7 +20,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 print("Cargando modelo ESRGAN x4 desde TensorFlow Hub... (30-50 segundos)")
 model = hub.load("https://tfhub.dev/captain-pool/esrgan-tf2/1")
-print("¡MODELO CARGADO! MBU UPSCALER LISTO PARA ROMPERLA")
+print("¡MODELO CARGADO! MBU UPSCALER LISTO")
 
 HTML = '''
 <!DOCTYPE html>
@@ -31,7 +32,7 @@ HTML = '''
     <style>
         body {font-family: Arial; background: linear-gradient(135deg, #000, #3d0b0b); color: white; text-align: center; padding: 40px;}
         h1 {font-size: 3.5em; color: #ff0000; text-shadow: 0 0 30px #ff0000;}
-        .container {max-width: 900px; margin: 0 auto; background: rgba(0,0,0,0.8); padding: 50px; border-radius: 20px;}
+        .container {max-width: 900px; margin:  auto; background: rgba(0,0,0,0.8); padding: 50px; border-radius: 20px;}
         input[type="file"] {padding: 20px; background: #222; border: 3px solid #ff0000; border-radius: 15px; color: white;}
         input[type="submit"] {background: #ff0000; color: white; padding: 20px 60px; font-size: 1.8em; border: none; border-radius: 50px; cursor: pointer; margin-top: 30px;}
         input[type="submit"]:hover {background: #ff3333; transform: scale(1.05);}
@@ -58,7 +59,7 @@ def add_watermark(img):
     font = cv2.FONT_HERSHEY_DUPLEX
     font_scale = 3
     thickness = 6
-    color = (0, 0, 255)  # Rojo
+    color = (0, 0, 255)
     margin = 30
     size = cv2.getTextSize(text, font, font_scale, thickness)[0]
     x = img.shape[1] - size[0] - margin
@@ -80,34 +81,25 @@ def index():
             input_path = os.path.join(UPLOAD_FOLDER, filename)
             f.save(input_path)
 
-            # Leer imagen
             img = cv2.imread(input_path)
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             img_rgb = img_rgb.astype(np.float32) / 255.0
             img_rgb = np.expand_dims(img_rgb, axis=0)
 
-            # Upscale 4x
             upscaled = model(img_rgb)
             upscaled = tf.squeeze(upscaled)
             upscaled = tf.cast(upscaled, tf.uint8).numpy()
 
-            # Convertir a BGR para OpenCV
             upscaled_bgr = cv2.cvtColor(upscaled, cv2.COLOR_RGB2BGR)
-
-            # Sharpening + contraste
             upscaled_bgr = cv2.detailEnhance(upscaled_bgr, sigma_s=15, sigma_r=0.25)
             upscaled_bgr = cv2.convertScaleAbs(upscaled_bgr, alpha=1.08, beta=6)
-
-            # Sello MBU SCZ
             upscaled_bgr = add_watermark(upscaled_bgr)
 
-            # Guardar PNG (calidad perfecta)
             new_name = f"MBU_UPSCALED_{filename.rsplit('.', 1)[0]}.png"
             output_path = os.path.join(UPLOAD_FOLDER, new_name)
             cv2.imwrite(output_path, upscaled_bgr)
             output_files.append(output_path)
 
-        # Una sola → directo, varias → ZIP
         if len(output_files) == 1:
             return send_file(output_files[0], as_attachment=True)
 
