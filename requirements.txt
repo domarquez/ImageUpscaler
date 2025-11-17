@@ -1,7 +1,7 @@
 Flask==2.3.3
-opencv-python-headless==4.8.0.74
-tensorflow-cpu==2.13.0
-tensorflow-hub==0.15.0
-Pillow==10.0.0
-numpy==1.24.3
-gunicorn==21.2.0
+opencv-python-headless==4.8.1.78  # Actualizado para compatibilidad
+tensorflow-cpu==2.17.0  # Compatible con Python 3.13, CPU-only
+tensorflow-hub==0.16.1  # Actualizado para TF 2.17
+Pillow==10.4.0  # Última estable
+numpy==1.26.4  # Compatible con TF 2.17
+gunicorn==22.0.0  # Actualizado
