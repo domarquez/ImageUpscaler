@@ -67,6 +67,13 @@ def upload():
     _, encoded_img = cv2.imencode('.jpg', numpy_image)
     byte_image = encoded_img.tobytes()
 
+    # Al final de la función enhance (después de output = model.enhance(...))
+    from PIL import Image, ImageDraw, ImageFont
+    draw = ImageDraw.Draw(output)
+    font = ImageFont.load_default()
+    draw.text((10, 10), "MBU SCZ", fill="white", font=font)
+    output.save('static/upscaled/' + filename)
+
     # Encode original image
     _, encoded_orig_img = cv2.imencode('.jpg', img)
     encoded_orig_img = encoded_orig_img.tobytes()
