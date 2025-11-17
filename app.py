@@ -1,4 +1,3 @@
-# app.py – Versión FINAL que funciona en Railway desde el primer deploy
 from flask import Flask, request, send_file
 import cv2
 import os
@@ -16,13 +15,13 @@ app.config['OUTPUT_FOLDER'] = '/tmp/results'
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
 
-# ===================== CARGA DEL MODELO UNA SOLA VEZ =====================
-print("Cargando modelo ESRGAN... (30-60 segundos la primera vez)")
+# CARGA DEL MODELO UNA SOLA VEZ
+print("Cargando modelo ESRGAN... (30-60 segundos)")
 SAVED_MODEL_PATH = "https://tfhub.dev/captain-pool/esrgan-tf2/1"
 model = hub.load(SAVED_MODEL_PATH)
-print("Modelo ESRGAN cargado correctamente!")
+print("Modelo ESRGAN cargado!")
 
-# ===================== FUNCIONES =====================
+# FUNCIONES
 def preprocess_image(image):
     if image.shape[-1] == 4:
         image = image[..., :3]
@@ -51,32 +50,24 @@ def add_watermark(pil_img, text="MBU SCZ"):
     draw.text(position, text, fill=(255, 255, 255, 200), font=font, stroke_width=2, stroke_fill=(0,0,0,200))
     return pil_img
 
-# ===================== RUTAS =====================
+# RUTA PRINCIPAL (GET=HTML, POST=UPLOAD)
 @app.route('/', methods=['GET', 'POST'])
 def index():
-    # Si es POST → procesar (para que funcione sin JS)
     if request.method == 'POST':
         return upload()
-    # Si es GET → mostrar formulario HTML
     return '''
     <!DOCTYPE html>
     <html>
-    <head>
-        <title>MBU Upscaler x4</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-    </head>
+    <head><title>MBU Upscaler</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
     <body style="font-family:Arial; text-align:center; padding:30px; background:#f4f4f4;">
       <h1 style="color:#2c3e50;">MBU Image Upscaler x4</h1>
-      <p style="font-size:18px;">Sube una o varias imágenes → upscale 4× + sello MBU SCZ</p>
+      <p style="font-size:18px;">Sube 1-10 imágenes → upscale 4× + sello MBU SCZ</p>
       <form method="post" enctype="multipart/form-data" style="margin:30px;">
-        <input type="file" name="images" multiple accept="image/*" required 
-               style="padding:15px; font-size:16px;">
+        <input type="file" name="images" multiple accept="image/*" required style="padding:15px; font-size:16px;">
         <br><br>
-        <button type="submit" style="padding:18px 40px; font-size:20px; background:#e74c3c; color:white; border:none; border-radius:8px; cursor:pointer;">
-          UPSCALAR AHORA
-        </button>
+        <button type="submit" style="padding:18px 40px; font-size:20px; background:#e74c3c; color:white; border:none; border-radius:8px;">UPSCALAR AHORA</button>
       </form>
-      <p><small>Railway CPU-only • ±10-20 seg por imagen • Gratis</small></p>
+      <p><small>Railway CPU • 10-20 seg/img • Gratis</small></p>
     </body>
     </html>
     '''
@@ -85,53 +76,36 @@ def index():
 def upload():
     if 'images' not in request.files:
         return "No file part", 400
-
     files = request.files.getlist('images')
     if not files or all(f.filename == '' for f in files):
         return "No selected files", 400
-
     result_paths = []
-
     for file in files:
         if file.filename == '':
             continue
-
         filestr = file.read()
         npimg = np.frombuffer(filestr, np.uint8)
         img = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
         if img is None:
             continue
-
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         preprocessed = preprocess_image(img_rgb)
         upscaled_tensor = model(preprocessed)
         upscaled_tensor = tf.squeeze(upscaled_tensor)
         upscaled_np = postprocess_image(upscaled_tensor)
-
         pil_img = Image.fromarray(upscaled_np)
         pil_img = add_watermark(pil_img, "MBU SCZ")
-
         output_path = os.path.join(app.config['OUTPUT_FOLDER'], f"upscaled_{file.filename}")
         pil_img.save(output_path, quality=95)
         result_paths.append(output_path)
-
-    # Una sola → imagen directa
     if len(result_paths) == 1:
         return send_file(result_paths[0], mimetype='image/jpeg')
-
-    # Varias → ZIP
     memory_file = BytesIO()
     with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
         for path in result_paths:
             zf.write(path, os.path.basename(path))
     memory_file.seek(0)
-
-    return send_file(
-        memory_file,
-        mimetype='application/zip',
-        as_attachment=True,
-        download_name=f"MBU_upscaled_{int(time.time())}.zip"
-    )
+    return send_file(memory_file, mimetype='application/zip', as_attachment=True, download_name=f"MBU_upscaled_{int(time.time())}.zip")
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
