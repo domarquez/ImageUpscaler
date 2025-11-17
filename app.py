@@ -121,3 +121,22 @@ if __name__ == '__main__':
     # Railway usa $PORT
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+
+@app.route('/')
+def index():
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head><title>MBU Upscaler</title></head>
+    <body style="font-family:Arial; text-align:center; padding:50px;">
+      <h1>MBU Image Upscaler x4 + Watermark</h1>
+      <p>Sube una o varias imágenes (máx 10 por lote recomendado)</p>
+      <form method="post" action="/upload" enctype="multipart/form-data">
+        <input type="file" name="images" multiple accept="image/*" required style="margin:10px;">
+        <br><br>
+        <button type="submit" style="padding:15px 30px; font-size:18px; background:#007bff; color:white; border:none; border-radius:5px;">UPSCALAR AHORA</button>
+      </form>
+      <p><small>Funciona en Railway • CPU-only • ±8-15 segundos por imagen</small></p>
+    </body>
+    </html>
+    '''
